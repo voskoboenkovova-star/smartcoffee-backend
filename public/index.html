@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <title>SmartCoffee Express — Тестовий Стенд</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f4f6f8; }
+    .container { display: flex; gap: 20px; }
+    .box { flex: 1; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    h2 { color: #333; }
+    button { background: #28a745; color: white; border: none; padding: 10px 15px; cursor: pointer; border-radius: 4px; }
+    button:hover { background: #218838; }
+    .order-card { background: #fff3cd; border-left: 5px solid #ffc107; padding: 10px; margin-bottom: 10px; }
+    .badge { background: #007bff; color: white; padding: 3px 8px; border-radius: 12px; font-size: 12px; }
+  </style>
+</head>
+<body>
+
+  <h1>☕ SmartCoffee Express — Тестовий Стенд (Back-end + WebSockets)</h1>
+
+  <div class="container">
+    <!-- КЛІЄНТСЬКИЙ БЛОК -->
+    <div class="box">
+      <h2>📱 Клієнт (Оформлення)</h2>
+      <label>Ваше ім'я:</label><br>
+      <input type="text" id="custName" value="Володимир"><br><br>
+      
+      <label>Оберіть напій:</label><br>
+      <select id="drinkSelect">
+        <option value="Капучино" data-price="65">Капучино (65 грн)</option>
+        <option value="Лате" data-price="70">Лате (70 грн)</option>
+        <option value="Еспресо" data-price="45">Еспресо (45 грн)</option>
+      </select><br><br>
+
+      <button onclick="sendOrder()">Надіслати замовлення (POST API)</button>
+      <p id="clientStatus"></p>
+    </div>
+
+    <!-- ПАНЕЛЬ БАРИСТА (KDS) -->
+    <div class="box">
+      <h2>🖥️ Панель Бариста / KDS (Real-Time)</h2>
+      <div id="kdsOrders">
+        <p><i>Очікування нових замовлень...</i></p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+
+    // 1. Надсилання замовлення на Backend (POST /api/v1/orders)
+    async function sendOrder() {
+      const name = document.getElementById('custName').value;
+      const select = document.getElementById('drinkSelect');
+      const drinkName = select.value;
+      const price = parseInt(select.options[select.selectedIndex].getAttribute('data-price'));
+
+      const response = await fetch('/api/v1/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerName: name,
+          items: [{ name: drinkName, price: price }]
+        })
+      });
+
+      const resData = await response.json();
+      if(resData.success) {
+        document.getElementById('clientStatus').innerText = `✅ Замовлення №${resData.data.id} створено!`;
+      } else {
+        document.getElementById('clientStatus').innerText = `❌ Помилка: ${resData.error}`;
+      }
+    }
+
+    // 2. Слухаємо WebSockets: нове замовлення приходить МИТТЄВО для Бариста
+    socket.on('new_order_to_kds', (order) => {
+      const kds = document.getElementById('kdsOrders');
+      if(kds.innerHTML.includes('Очікування')) kds.innerHTML = '';
+
+      const card = document.createElement('div');
+      card.className = 'order-card';
+      card.id = `order-${order.id}`;
+      card.innerHTML = `
+        <strong>Замовлення №${order.id}</strong> — ${order.customerName} <span class="badge">${order.status}</span><br>
+        Позиції: ${order.items.map(i => i.name).join(', ')} (${order.totalPrice} грн)<br><br>
+        <button onclick="changeStatus(${order.id}, 'Готово')" style="background:#007bff">Готово (Запустити таймер)</button>
+      `;
+      kds.prepend(card);
+    });
+
+    // 3. Зміна статусу бариста (PATCH /api/v1/orders/:id/status)
+    async function changeStatus(orderId, status) {
+      await fetch(`/api/v1/orders/${orderId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: status })
+      });
+    }
+
+    socket.on('order_status_changed', (order) => {
+      const card = document.getElementById(`order-${order.id}`);
+      if(card) {
+        card.style.borderColor = '#28a745';
+        card.innerHTML += `<br><br><span style="color:green">⏱️ Смарт-таймер свіжості до: ${order.timerExpireAt}</span>`;
+      }
+    });
+  </script>
+</body>
+</html>
